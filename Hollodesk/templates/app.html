@@ -35,9 +35,9 @@ html,body{
   z-index:5;height:var(--toolbar-h);min-width:560px;max-width:96%;
   padding:12px;display:flex;gap:12px;align-items:center;justify-content:space-between;
   background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.02));
-  border-radius:14px;box-shadow:var(--shadow);
+  border-radius:40px;box-shadow:var(--shadow);
   backdrop-filter:blur(8px) saturate(120%);
-  border:1px solid rgba(255,255,255,0.04);
+  border:10px solid #ff6b6b;
   transition:opacity .18s ease,transform .18s ease;
 }
 #toolbar.hidden{opacity:0;transform:translate(-50%,10px);pointer-events:none;}
@@ -53,6 +53,25 @@ select#bgSelect{
   outline:none;border:1px solid rgba(255,255,255,0.04);
 }
 
+.hvr:hover{
+  transform:scale(1.1);
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+}
+.hvr-black:hover{
+  transform:scale(1.1);
+  box-shadow:0 8px 24px rgba(0,0,0,0.6);
+}
+.hvr-red:hover{
+  transform:scale(1.1);
+  box-shadow:0 8px 24px rgba(203, 31, 31, 0.6);
+}
+.hvr-blue:hover{
+  transform:scale(1.1);
+  box-shadow:0 8px 24px rgba(30, 67, 214, 0.6);
+}
+.hvr1:hover{
+  box-shadow:0 6px 20px rgba(0,0,0,0.3);
+}
 </style>
 </head>
 <body>
@@ -65,20 +84,20 @@ select#bgSelect{
 
 <div id="toolbar">
   <div style="display:flex;gap:12px;align-items:center;">
-    
-    <div class="pen-btn" id="pen-black" data-color="#0b0b0b" style="background:#000;"></div>
-    <div class="pen-btn" id="pen-blue" data-color="#0b5cff" style="background:#0b5cff;"></div>
-    <div class="pen-btn" id="pen-red" data-color="#ff3b3b" style="background:#ff3b3b;"></div>
-    <input class="selfclr" type="color" id="customColor" value="#00ff88" style="width:44px;height:44px;border:none;border-radius:10px;cursor:pointer;">
+    <a class="pen-btn hvr" href="index.html">🏠</a>
+    <div class="pen-btn hvr-black" id="pen-black" data-color="#0b0b0b" style="background:#000;"></div>
+    <div class="pen-btn hvr-blue" id="pen-blue" data-color="#0b5cff" style="background:#0b5cff;"></div>
+    <div class="pen-btn hvr-red" id="pen-red" data-color="#ff3b3b" style="background:#ff3b3b;"></div>
+    <input class="selfclr hvr" type="color" id="customColor" value="#00ff88" style="width:44px;height:44px;border:none;border-radius:10px;cursor:pointer;">
     <input type="range" id="penSizeSlider" min="1" max="50" value="6" style="width:100px;">
-    <select id="bgSelect"><option value="solid">Solid</option>
+    <select class="hvr1"id="bgSelect"><option value="solid">Solid</option>
       <option value="ruled">Ruled</option><option value="cartesian">Cartesian</option></select>
-    <input id="bgColor" type="color" value="#ffffff" style="width:44px;height:44px;border-radius:10px;border:none;">
+    <input class="hvr" id="bgColor" type="color" value="#ffffff" style="width:44px;height:44px;border-radius:10px;border:none;">
   </div>
   <div style="display:flex;gap:12px;align-items:center;">
-    <div class="icon-btn" id="clearBtn">🧹</div>
-    <div class="icon-btn" id="saveBtn">📷</div>
-    <div class="icon-btn" id="pauseBtn">⏯</div>
+    <div class="icon-btn hvr" id="clearBtn">🧹</div>
+    <div class="icon-btn hvr" id="saveBtn">📷</div>
+    <div class="icon-btn hvr" id="pauseBtn">⏯</div>
   </div>
 </div>
 </body>
