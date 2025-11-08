@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>HoloDesk — Virtual Air Whiteboard</title>
+
+<!-- Mediapipe Dependencies -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<style>
+:root{
+  --toolbar-h:76px;
+  --glass:rgba(255,255,255,0.06);
+  --shadow:0 6px 24px rgba(0,0,0,0.35);
+}
+html,body{
+  margin:0;height:100%;overflow:hidden;background:#000;color:#fff;
+  font-family:Inter,Segoe UI,system-ui;
+}
+#videoWrap{position:fixed;inset:0;z-index:0;overflow:hidden;}
+#cam{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scaleX(-1);
+  width:100vw;height:100vh;object-fit:cover;
+}
+.canvasLayer{position:fixed;inset:0;z-index:1;pointer-events:none;}
+#overlay{position:fixed;inset:0;z-index:2;background:rgba(255,255,255,0.85);}
+#drawCanvas{position:fixed;inset:0;z-index:3;pointer-events:none;}
+#pointerCanvas{position:fixed;inset:0;z-index:4;pointer-events:none;}
+
+#toolbar{
+  position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+  z-index:5;height:var(--toolbar-h);min-width:560px;max-width:96%;
+  padding:12px;display:flex;gap:12px;align-items:center;justify-content:space-between;
+  background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.02));
+  border-radius:14px;box-shadow:var(--shadow);
+  backdrop-filter:blur(8px) saturate(120%);
+  border:1px solid rgba(255,255,255,0.04);
+  transition:opacity .18s ease,transform .18s ease;
+}
+#toolbar.hidden{opacity:0;transform:translate(-50%,10px);pointer-events:none;}
+
+.pen-btn,.icon-btn{
+  width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;border:2px solid rgba(255,255,255,0.06);transition:transform .12s ease;
+}
+.pen-btn.active{transform:scale(1.05);box-shadow:0 6px 18px rgba(0,0,0,0.45);}
+.icon-btn{background:var(--glass);}
+select#bgSelect{
+  background:transparent;color:inherit;border:none;font-size:14px;padding:8px 10px;border-radius:8px;
+  outline:none;border:1px solid rgba(255,255,255,0.04);
+}
+
+</style>
+</head>
+<body>
+
+<div id="videoWrap"><video id="cam" autoplay playsinline></video></div>
+<canvas id="bgCanvas" class="canvasLayer"></canvas>
+<div id="overlay" class="canvasLayer"></div>
+<canvas id="drawCanvas"></canvas>
+<canvas id="pointerCanvas"></canvas>
+
+<div id="toolbar">
+  <div style="display:flex;gap:12px;align-items:center;">
+    
+    <div class="pen-btn" id="pen-black" data-color="#0b0b0b" style="background:#000;"></div>
+    <div class="pen-btn" id="pen-blue" data-color="#0b5cff" style="background:#0b5cff;"></div>
+    <div class="pen-btn" id="pen-red" data-color="#ff3b3b" style="background:#ff3b3b;"></div>
+    <input class="selfclr" type="color" id="customColor" value="#00ff88" style="width:44px;height:44px;border:none;border-radius:10px;cursor:pointer;">
+    <input type="range" id="penSizeSlider" min="1" max="50" value="6" style="width:100px;">
+    <select id="bgSelect"><option value="solid">Solid</option>
+      <option value="ruled">Ruled</option><option value="cartesian">Cartesian</option></select>
+    <input id="bgColor" type="color" value="#ffffff" style="width:44px;height:44px;border-radius:10px;border:none;">
+  </div>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <div class="icon-btn" id="clearBtn">🧹</div>
+    <div class="icon-btn" id="saveBtn">📷</div>
+    <div class="icon-btn" id="pauseBtn">⏯</div>
+  </div>
+</div>
+</body>
+
+<script>
+const video=document.getElementById('cam');
+const bgCanvas=document.getElementById('bgCanvas');
+const overlay=document.getElementById('overlay');
+const drawCanvas=document.getElementById('drawCanvas');
+const pointerCanvas=document.getElementById('pointerCanvas');
+const toolbar=document.getElementById('toolbar');
+const clearBtn=document.getElementById('clearBtn');
+const saveBtn=document.getElementById('saveBtn');
+const pauseBtn=document.getElementById('pauseBtn');
+const bgSelect=document.getElementById('bgSelect');
+const bgColorInput=document.getElementById('bgColor');
+const customColor=document.getElementById('customColor');
+const penButtons={black:document.getElementById('pen-black'),
+                  blue:document.getElementById('pen-blue'),
+                  red:document.getElementById('pen-red')};
+
+let currentPenColor='#0b0b0b',penSize=6;
+let bgCtx,drawCtx,pointerCtx;
+let prevWrite=null,smoothX=null,smoothY=null;
+const SMOOTHING=0.25;
+let mode='idle',camera,isCameraRunning=false;
+
+// resize
+function resizeAll(){
+  const w=window.innerWidth,h=window.innerHeight,ratio=window.devicePixelRatio||1;
+  [bgCanvas,drawCanvas,pointerCanvas].forEach(c=>{
+    c.width=w*ratio;c.height=h*ratio;c.style.width=w+'px';c.style.height=h+'px';
+  });
+  bgCtx=bgCanvas.getContext('2d');
+  drawCtx=drawCanvas.getContext('2d');
+  pointerCtx=pointerCanvas.getContext('2d');
+  [bgCtx,drawCtx,pointerCtx].forEach(ctx=>ctx.setTransform(ratio,0,0,ratio,0,0));
+  drawCtx.lineCap='round';drawCtx.lineJoin='round';
+}
+window.addEventListener('resize',resizeAll);
+
+// pen controls
+Object.values(penButtons).forEach(b=>{
+  b.onclick=()=>{Object.values(penButtons).forEach(bb=>bb.classList.remove('active'));
+    b.classList.add('active');currentPenColor=b.dataset.color;drawCtx.strokeStyle=currentPenColor;}
+});
+penButtons.black.classList.add('active');
+customColor.oninput=()=>{Object.values(penButtons).forEach(bb=>bb.classList.remove('active'));
+  currentPenColor=customColor.value;drawCtx.strokeStyle=currentPenColor;};
+
+clearBtn.onclick=()=>drawCtx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
+saveBtn.onclick=()=>{const data=drawCanvas.toDataURL('image/png');
+  const a=document.createElement('a');a.href=data;a.download='holodesk.png';a.click();};
+pauseBtn.onclick=()=>{if(!camera)return;isCameraRunning=!isCameraRunning;
+  isCameraRunning?camera.start():camera.stop();};
+
+// pen size
+const penSizeSlider = document.getElementById('penSizeSlider');
+penSizeSlider.oninput = () => {
+  penSize = parseInt(penSizeSlider.value);
+};
+
+
+// bg + contrast
+function hexToRgba(hex,a){const c=hex.replace('#','');
+  const r=parseInt(c.substr(0,2),16),g=parseInt(c.substr(2,2),16),b=parseInt(c.substr(4,2),16);
+  return`rgba(${r},${g},${b},${a})`;}
+
+// Auto contrast for text/buttons
+function updateContrast(){
+  const rgb=parseInt(bgColorInput.value.slice(1),16);
+  const r=(rgb>>16)&255,g=(rgb>>8)&255,b=rgb&255;
+  const brightness=(r*299+g*587+b*114)/1000;
+  const isLight=brightness>160;
+  toolbar.style.color=isLight?'#000':'#fff';
+  document.querySelectorAll('.icon-btn,.pen-btn,select').forEach(e=>{
+    e.style.color=isLight?'#000':'#fff';
+    e.style.borderColor=isLight?'rgba(0,0,0,0.2)':'rgba(255,255,255,0.2)';
+  });
+}
+
+function renderBackground(){
+  const w=window.innerWidth,h=window.innerHeight;bgCtx.clearRect(0,0,w,h);
+  const sel=bgSelect.value;
+  updateContrast();
+  if(sel==='solid'){overlay.style.background=hexToRgba(bgColorInput.value,0.85);}
+  else if(sel==='ruled'){
+    overlay.style.background='rgba(255,255,255,0.85)';
+    bgCtx.strokeStyle='black';
+    bgCtx.lineWidth=2.2;
+    for(let y=50;y<h;y+=80){bgCtx.beginPath();bgCtx.moveTo(0,y);bgCtx.lineTo(w,y);bgCtx.stroke();}
+  }
+  else if(sel==='cartesian'){
+    overlay.style.background='rgba(255,255,255,0.85)';
+    bgCtx.strokeStyle='black';
+    bgCtx.lineWidth=2;
+    const step=100;
+    for(let x=0;x<w;x+=step){bgCtx.beginPath();bgCtx.moveTo(x,0);bgCtx.lineTo(x,h);bgCtx.stroke();}
+    for(let y=0;y<h;y+=step){bgCtx.beginPath();bgCtx.moveTo(0,y);bgCtx.lineTo(w,y);bgCtx.stroke();}
+    // Center bold axes
+    bgCtx.lineWidth=3;
+    bgCtx.beginPath();bgCtx.moveTo(w/2,0);bgCtx.lineTo(w/2,h);bgCtx.stroke();
+    bgCtx.beginPath();bgCtx.moveTo(0,h/2);bgCtx.lineTo(w,h/2);bgCtx.stroke();
+  }
+}
+bgSelect.onchange=renderBackground;bgColorInput.oninput=renderBackground;
+
+// finger logic
+function fingersExtended(lms){
+  if(!lms)return{count:0,extended:{},tips:{}};
+  const t={thumb:lms[4],index:lms[8],middle:lms[12],ring:lms[16],pinky:lms[20]};
+  const p={thumb:lms[2],index:lms[6],middle:lms[10],ring:lms[14],pinky:lms[18]};
+  const e={};let c=0;['index','middle','ring','pinky'].forEach(k=>{
+    const ext=t[k].y<p[k].y-0.02;e[k]=ext;if(ext)c++;});
+  const thumbExt=Math.abs(t.thumb.x-p.thumb.x)>0.04;e.thumb=thumbExt;if(thumbExt)c++;
+  return{count:c,extended:e,tips:t};
+}
+function determineMode(f){
+  const e=f.extended;if(!e)return'idle';
+  if(e.index&&!e.middle&&!e.ring&&!e.pinky&&!e.thumb)return'write';
+  if(e.thumb&&e.index&&e.middle&&!e.ring&&!e.pinky)return'pan';
+  if(e.thumb&&e.index&&e.middle&&e.ring&&e.pinky)return'erase';
+  if(f.count>=4)return'erase';
+  if(e.index&&!e.middle)return'write';return'idle';
+}
+
+// corrected scaling so tip matches finger
+function landmarkToViewport(l){
+  const rect=video.getBoundingClientRect();
+  const x=(1-l.x)*rect.width;
+  const y=l.y*rect.height;
+  return{x,y};
+}
+function smooth(curr,prev){if(prev===null)return curr;return prev+(curr-prev)*SMOOTHING;}
+
+// markers
+function drawTriangle(x,y,color){
+  const s=18;pointerCtx.fillStyle=color;
+  pointerCtx.beginPath();pointerCtx.moveTo(x,y-s);
+  pointerCtx.lineTo(x-s/1.3,y+s/1.3);pointerCtx.lineTo(x+s/1.3,y+s/1.3);
+  pointerCtx.closePath();pointerCtx.fill();
+}
+function drawCircle(x,y,color){
+  pointerCtx.beginPath();pointerCtx.arc(x,y,25,0,Math.PI*2);
+  pointerCtx.fillStyle=color;pointerCtx.fill();
+}
+
+// onResults
+function onResults(r){
+  pointerCtx.clearRect(0,0,pointerCanvas.width,pointerCanvas.height);
+  if(!r.multiHandLandmarks||r.multiHandLandmarks.length===0){mode='idle';prevWrite=null;return;}
+  const l=r.multiHandLandmarks[0];
+  const f=fingersExtended(l);const newMode=determineMode(f);
+  mode=newMode;if(newMode==='write')toolbar.classList.add('hidden');else toolbar.classList.remove('hidden');
+  const tip=f.tips.index;const vp=landmarkToViewport(tip);
+  smoothX=smooth(vp.x,smoothX);smoothY=smooth(vp.y,smoothY);
+
+  if(mode==='write'){
+    drawCtx.strokeStyle=currentPenColor;drawCtx.lineWidth=penSize;
+    drawCtx.beginPath();
+    if(prevWrite){drawCtx.moveTo(prevWrite.x,prevWrite.y);
+      drawCtx.lineTo(smoothX,smoothY);drawCtx.stroke();}
+    prevWrite={x:smoothX,y:smoothY};
+    drawTriangle(smoothX,smoothY,currentPenColor);
+  }
+  else if(mode==='erase'){
+    const er=30;drawCtx.save();drawCtx.globalCompositeOperation='destination-out';
+    drawCtx.beginPath();drawCtx.arc(smoothX,smoothY,er,0,Math.PI*2);drawCtx.fill();drawCtx.restore();
+    drawCircle(smoothX,smoothY,'rgba(255,50,50,0.6)');
+    prevWrite=null;
+  }
+  else{prevWrite=null;}
+}
+
+// setup
+function setupHands(){
+  const hands=new Hands({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+  hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.7,minTrackingConfidence:0.6});
+  hands.onResults(onResults);
+  camera=new Camera(video,{onFrame:async()=>{await hands.send({image:video});},width:1280,height:720});
+  camera.start();isCameraRunning=true;
+}
+async function init(){
+  resizeAll();renderBackground();
+  try{await navigator.mediaDevices.getUserMedia({video:true});}catch(e){alert("Camera access needed");return;}
+  setupHands();
+}
+window.onload=init;
+</script>
+</html>
